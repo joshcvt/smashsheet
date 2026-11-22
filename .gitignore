@@ -1,0 +1,7 @@
+config.json
+config.json.tmp
+service-account*.json
+.smashrun_calls.json
+.venv/
+__pycache__/
+*.log

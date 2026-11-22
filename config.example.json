@@ -1,0 +1,38 @@
+{
+  "start_date": "2026-11-15",
+  "lookback_hours": 72,
+  "smashrun": {
+    "access_token": "PASTE_TOKEN_FROM_SMASHRUN_API_EXPLORER",
+    "client_id": "",
+    "client_secret": "",
+    "refresh_token": "",
+    "rate_limit": {"min_interval_s": 5, "max_calls": 20, "window_s": 600}
+  },
+  "google": {
+    "service_account_file": "service-account.json",
+    "spreadsheet_id": "PASTE_SPREADSHEET_ID",
+    "sheet_name": "Sheet1"
+  },
+  "sheet_layout": {
+    "columns": {"date": "A", "run_time": "B", "km": "C"},
+    "copy_from_previous_row": [],
+    "row_formulas": {
+      "D": "=B{r}/C{r}",
+      "E": "=C{r}/1.609344"
+    }
+  },
+  "treadmill": {
+    "enabled": false,
+    "set_columns": {"H": "T"}
+  },
+  "standard_run": {
+    "enabled": false,
+    "label": "My usual loop",
+    "min_km": 4.95,
+    "max_km": 5.06,
+    "start_lat": null,
+    "start_lon": null,
+    "start_radius_m": 250,
+    "set_columns": {"H": "X"}
+  }
+}
