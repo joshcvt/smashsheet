@@ -28,11 +28,14 @@
   "standard_run": {
     "enabled": false,
     "label": "My usual loop",
-    "min_km": 4.95,
-    "max_km": 5.06,
+    "min_km": 4.8,
+    "max_km": 5.2,
     "start_lat": null,
     "start_lon": null,
     "start_radius_m": 250,
+    "end_radius_m": 250,
+    "checkpoints": [],
+    "checkpoint_radius_m": 75,
     "set_columns": {"H": "X"}
   }
 }

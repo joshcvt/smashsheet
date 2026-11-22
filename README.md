@@ -77,11 +77,26 @@ priority over the standard-run check.
 
 ### Standard run (optional)
 
-To tag a regular route, set `standard_run.enabled` to `true`. A run matches when
-its distance is between `min_km` and `max_km` and, if `start_lat`/`start_lon` are
-set, its first GPS point is within `start_radius_m` of that point. Runs without
-GPS never match once a start point is set. On a match, `set_columns` gets written
-(e.g. `{"H": "A"}`).
+To tag a regular route, set `standard_run.enabled` to `true`. A run matches when:
+
+1. its distance is between `min_km` and `max_km` (checked first, no extra API call);
+2. if `start_lat`/`start_lon` are set: its first GPS point is within
+   `start_radius_m` of that point and its last within `end_radius_m`;
+3. its track passes within `checkpoint_radius_m` of every point in
+   `checkpoints`, in any order (so the route run in reverse still counts).
+
+Runs without GPS never match once a start point is set. On a match,
+`set_columns` gets written (e.g. `{"H": "X"}`); otherwise those columns are
+left blank.
+
+Rather than typing in coordinates, learn them from a run you know was the route:
+
+```sh
+.venv/bin/python smashsheet.py --learn-standard 2026-11-18   # or a Smashrun activity id
+```
+
+This writes the start point and 10 checkpoints (change with `--checkpoints N`)
+into `config.json`. It uses one or two Smashrun calls.
 
 ## Running
 

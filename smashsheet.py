@@ -169,17 +169,33 @@ def run_start_local(run):
     return dt.datetime.fromisoformat(s)
 
 
-def first_gps_point(detail):
+def gps_track(detail):
+    """List of (lat, lon, km_so_far_or_None) with GPS dropouts removed."""
     keys = detail.get("recordingKeys") or []
     vals = detail.get("recordingValues") or []
     if "latitude" not in keys or "longitude" not in keys:
-        return None
+        return []
     lats = vals[keys.index("latitude")]
     lons = vals[keys.index("longitude")]
-    for lat, lon in zip(lats, lons):
-        if lat and lon:
-            return lat, lon
-    return None
+    dists = vals[keys.index("distance")] if "distance" in keys else [None] * len(lats)
+    return [(lat, lon, d) for lat, lon, d in zip(lats, lons, dists) if lat and lon]
+
+
+def pick_checkpoints(track, n):
+    """n points spread evenly by distance along the track (by index if no distance)."""
+    if len(track) < 2:
+        return []
+    if track[-1][2]:
+        total = track[-1][2]
+        out, j = [], 0
+        for i in range(n):
+            goal = total * (i + 0.5) / n
+            while j < len(track) - 1 and track[j][2] < goal:
+                j += 1
+            out.append(track[j])
+    else:
+        out = [track[int(len(track) * (i + 0.5) / n)] for i in range(n)]
+    return [[round(p[0], 5), round(p[1], 5)] for p in out]
 
 
 def haversine_m(a, b):
@@ -190,7 +206,12 @@ def haversine_m(a, b):
 
 
 def matches_standard_run(run, smashrun, std):
-    """Cheap guess: distance in band and (if configured) GPS start nearby."""
+    """Guess whether a run is the standard route.
+
+    Distance band first (no API call), then, if a start point is configured:
+    GPS start and end both near it, and the track passing within
+    checkpoint_radius_m of every configured checkpoint (in any order).
+    """
     km = float(run["distance"])
     if not (std["min_km"] <= km <= std["max_km"]):
         return False, "distance %.2f km outside %.2f-%.2f" % (km, std["min_km"], std["max_km"])
@@ -198,13 +219,55 @@ def matches_standard_run(run, smashrun, std):
         return True, "distance in band (no start point configured)"
     if run.get("isTreadmill") or run.get("hasDetailsGPS") is False:
         return False, "no GPS"
-    pt = first_gps_point(smashrun.run_detail(run["activityId"]))
-    if pt is None:
+    track = gps_track(smashrun.run_detail(run["activityId"]))
+    if not track:
         return False, "no GPS"
-    d = haversine_m(pt, (std["start_lat"], std["start_lon"]))
-    if d > std.get("start_radius_m", 250):
-        return False, "started %.0f m from standard start" % d
-    return True, "distance in band, started %.0f m from standard start" % d
+    home = (std["start_lat"], std["start_lon"])
+    start_r = std.get("start_radius_m", 250)
+    end_r = std.get("end_radius_m", start_r)
+    d_start = haversine_m(track[0], home)
+    if d_start > start_r:
+        return False, "started %.0f m from standard start" % d_start
+    d_end = haversine_m(track[-1], home)
+    if d_end > end_r:
+        return False, "ended %.0f m from standard start" % d_end
+    cps = std.get("checkpoints") or []
+    cp_r = std.get("checkpoint_radius_m", 75)
+    missed = 0
+    worst = 0.0
+    for cp in cps:
+        nearest = min(haversine_m(p, cp) for p in track)
+        worst = max(worst, nearest)
+        if nearest > cp_r:
+            missed += 1
+    if missed:
+        return False, "missed %d of %d checkpoints (worst %.0f m)" % (missed, len(cps), worst)
+    return True, "start %.0f m, end %.0f m, %d/%d checkpoints (worst %.0f m)" % (
+        d_start, d_end, len(cps), len(cps), worst)
+
+
+def learn_standard_run(cfg, which, n_checkpoints):
+    """Set standard_run start point + checkpoints from a run (activity id or YYYY-MM-DD)."""
+    smashrun = Smashrun(cfg)
+    if "-" in which:
+        runs = [r for r in smashrun.recent_runs(count=50)
+                if r["startDateTimeLocal"].startswith(which)]
+        if len(runs) != 1:
+            raise SystemExit("Found %d runs on %s in the last 50; pass an activity id instead"
+                             % (len(runs), which))
+        activity_id = runs[0]["activityId"]
+    else:
+        activity_id = int(which)
+    track = gps_track(smashrun.run_detail(activity_id))
+    if not track:
+        raise SystemExit("Run %s has no GPS track" % activity_id)
+    std = cfg.setdefault("standard_run", {})
+    std["start_lat"] = round(track[0][0], 5)
+    std["start_lon"] = round(track[0][1], 5)
+    std["checkpoints"] = pick_checkpoints(track, n_checkpoints)
+    save_config(cfg)
+    log.info("Learned standard run from activity %s: start point, end check, and %d checkpoints "
+             "saved to %s", activity_id, len(std["checkpoints"]), cfg["_path"])
 
 
 # ---------------------------------------------------------------- sheet
@@ -342,6 +405,11 @@ def main():
     ap.add_argument("--config", default=os.path.join(HERE, "config.json"))
     ap.add_argument("--dry-run", action="store_true", help="don't write to the sheet")
     ap.add_argument("-v", "--verbose", action="store_true")
+    ap.add_argument("--learn-standard", metavar="RUN",
+                    help="set standard_run's start point and checkpoints from a run "
+                         "(Smashrun activity id or YYYY-MM-DD), then exit")
+    ap.add_argument("--checkpoints", type=int, default=10,
+                    help="number of checkpoints for --learn-standard (default 10)")
     args = ap.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(asctime)s %(levelname)s %(message)s")
@@ -349,6 +417,9 @@ def main():
     logging.getLogger("google").setLevel(logging.WARNING)
     cfg = load_config(args.config)
     try:
+        if args.learn_standard:
+            learn_standard_run(cfg, args.learn_standard, args.checkpoints)
+            return 0
         n = sync(cfg, dry_run=args.dry_run)
     except AuthError as e:
         log.error("%s", e)
